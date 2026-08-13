@@ -1,5 +1,5 @@
 # NuGet Downloader
-PowerShell script to download NuGet packages.
+Windows PowerShell script to download NuGet packages.
 
 ## Usage
 
@@ -17,7 +17,7 @@ Skips any file that already exists to avoid re-downloading.
 
 ### Limitations & Considerations
 
-Public NuGet.org has a query limit; the script paginates through results (100 per page).
+Public NuGet.org has a query limit; the script paginates through the results (100 per page).
 Authentication is not handled; for private feeds, you might need to pass an API key or use Invoke-WebRequest -Credential.
 Large downloads: If a publisher has hundreds of packages, this may take time and bandwidth.
-The search API may not return all packages if the author name is not exactly matched; you can adjust the q parameter if needed.
+The search API may not return all packages if the author name is not exact; you can adjust the q parameter if needed.

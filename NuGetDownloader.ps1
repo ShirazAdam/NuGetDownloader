@@ -1,4 +1,32 @@
-﻿param(
+<#
+.SYNOPSIS
+    Downloads NuGet packages from a specific publisher (author) from a NuGet feed.
+
+.DESCRIPTION
+    Searches a NuGet V3 feed for packages by the specified author and downloads
+    their .nupkg files to a local directory. Automatically paginates through all
+    results using the API's totalHits count.
+
+.PARAMETER Publisher
+    The name of the publisher/author (e.g., "Microsoft").
+
+.PARAMETER Source
+    The NuGet V3 index URL. Defaults to the official NuGet gallery.
+
+.PARAMETER OutputDirectory
+    The folder where packages will be saved. Defaults to ".\Packages".
+
+.PARAMETER IncludePrerelease
+    If specified, prerelease packages are included in the search.
+
+.PARAMETER AllVersions
+    If specified, all versions of each package are downloaded; otherwise only the latest.
+
+.PARAMETER Limit
+    Maximum number of package versions to process (for testing). Default is 0 (no limit).
+#>
+
+param(
     [Parameter(Mandatory = $true)]
     [string]$Publisher,
 
@@ -71,7 +99,7 @@ $resources = Get-V3Resources -IndexUrl $Source
 $searchUrl = $resources.SearchService
 $packageBase = $resources.PackageBase
 
-# Ensure search URL ends with '?'
+# Ensure search URL ends with '?' or '&'
 if (-not ($searchUrl -match '\?')) {
     $searchUrl += '?'
 } else {
@@ -82,9 +110,9 @@ Write-Host "Searching for packages by publisher: '$Publisher' ..." -ForegroundCo
 
 $skip = 0
 $take = 100
-$totalDownloaded = 0
+$totalHits = $null
 $processedCount = 0
-$allPackages = @()
+$totalDownloaded = 0
 
 do {
     $query = "$($searchUrl)q=author:`"$Publisher`"&prerelease=$($IncludePrerelease.IsPresent)&skip=$skip&take=$take"
@@ -95,26 +123,40 @@ do {
         exit 1
     }
 
+    # On first request, capture totalHits if available
+    if ($null -eq $totalHits) {
+        if ($response.PSObject.Properties.Name -contains 'totalHits') {
+            $totalHits = $response.totalHits
+            if ($totalHits -eq 0) {
+                Write-Host "No packages found for publisher '$Publisher'." -ForegroundColor Red
+                exit 0
+            }
+            Write-Host "Total packages found: $totalHits" -ForegroundColor Yellow
+        } else {
+            # Fallback: totalHits not provided, we'll use page size to determine end
+            Write-Host "Total hits not provided by feed; will paginate until an empty page is returned." -ForegroundColor Yellow
+        }
+    }
+
     $packages = $response.data
     if (-not $packages -or $packages.Count -eq 0) {
         break
     }
 
+    Write-Host "Processing page $($skip / $take + 1) ..." -ForegroundColor Magenta
+
     foreach ($pkg in $packages) {
         $id = $pkg.id
         $versions = $pkg.versions | ForEach-Object { $_.version }
         if ($versions.Count -eq 0) {
-            # Fallback: use the top-level version
             $versions = @($pkg.version)
         }
         # If not AllVersions, only download the latest version
-        # The "version" property is the latest (stable or prerelease depending on search)
         if (-not $AllVersions) {
             $latest = $pkg.version
             if ($versions -contains $latest) {
                 $versions = @($latest)
             } else {
-                # If not in the versions list, just use the latest from the list
                 $versions = @($versions[-1])
             }
         }
@@ -134,10 +176,16 @@ do {
     }
 
     $skip += $take
-    # Break if we have fewer than 'take' results (last page)
-    if ($packages.Count -lt $take) {
-        break
+
+    # If we have totalHits, use it to decide when to stop; otherwise fallback to page count
+    if ($totalHits) {
+        # Continue while skip is less than totalHits
+    } else {
+        # If we got fewer than $take items, we've reached the last page
+        if ($packages.Count -lt $take) {
+            break
+        }
     }
-} while ($true)
+} while (-not $totalHits -or $skip -lt $totalHits)
 
 Write-Host "Completed. Processed $processedCount package entries, downloaded $totalDownloaded new packages to '$OutputDirectory'." -ForegroundColor Green
